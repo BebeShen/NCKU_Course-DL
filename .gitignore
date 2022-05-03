@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# pipenv file
+chromedriver.exe
+*.zip
+*LOG.md
+*.html
