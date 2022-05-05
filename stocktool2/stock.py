@@ -23,7 +23,7 @@ def SUM(S:pd.DataFrame, N:int):
 
 #   對Series整體下移動 N, 返回 Series(shift後會產生NAN)
 def REF(S:pd.DataFrame, N:int):
-    return pd.Series(S).shift(N).values  
+    return pd.Series(S).shift(N)  
 
 def IF(S_BOOL,S_TRUE,S_FALSE):          
     return np.where(S_BOOL, S_TRUE, S_FALSE)
@@ -62,27 +62,17 @@ def __calculateKD(df):
     '''
 
     # 計算9日內最高成交價
-    df['9daymax'] = df['high'].rolling('9D').max()
-    df['9daymin'] = df['low'].rolling('9D').min()
+    df['9daymax'] = df['high'].rolling(9).max()
+    df['9daymin'] = df['low'].rolling(9).min()
     # print(df['9daymax'], df['9daymin'])
     df['RSV'] = 0
-    df['RSV'] = 100 * (df['close'] - df['9daymin']) / (df['9daymax'] - df['9daymin'])
+    df['RSV'] = (df['close'] - df['9daymin']) / (df['9daymax'] - df['9daymin'])*100
     # print(df['RSV'])
 
     # 計算k值 計算d值
-    K=[50]
-    D=[50]
-    for i in range(len(df['RSV'])):
-        KValue = (2/3)*K[-1] + (df['RSV'][i]/3)
-        DValue = (2/3)*D[-1] + KValue/3
-        K.append(KValue)
-        D.append(DValue)
-    K=pd.Series(K[1:], index=df['RSV'].index)
-    K.name='KValue'
-    D=pd.Series(D[1:], index=df['RSV'].index)
-    D.name='DValue'
-    df['k'] = K
-    df['d'] = D
+    df['K9'] = df['RSV'].ewm(com=2, adjust=False).mean()
+    df['D9'] = df["K9"].ewm(com=2, adjust=False).mean()
+    df["3K-2D"] = 3 * df["K9"] - 2 * df["D9"]
     # df.reset_index(inplace=True)
     # df['date'] = pd.to_datetime(df['date'], unit='s')
     df = df.drop(['9daymax', '9daymin'], axis=1)
@@ -94,22 +84,20 @@ def __calculateMACD(df):
     MA分成EMA(exponential)和SMA(mean), 這裡使用EMA
 
     '''
-    #我們分別計算7天,15天與30天的移動平均線
-    df['MA_7'] = df['close'].rolling(7).mean()
-    df['MA_15'] = df['close'].rolling(15).mean()
-    df['MA_30'] = df['close'].rolling(30).mean()
     # com=1 代表權重為 1/(com+1) = 1/2
-    df['EMA_12'] = df['close'].ewm(com=1, adjust=False).mean()
-    df['EMA_26'] = df['close'].ewm(com=1, adjust=False).mean()
-    df['EMA_12'] = df['EMA_12'].rolling(12).mean()
-    df['EMA_26'] = df['EMA_26'].rolling(26).mean()
+    df['EMA_12'] = df['close'].ewm(span=12, adjust=False).mean()
+    df['EMA_26'] = df['close'].ewm(span=26, adjust=False).mean()
+    # df['EMA_12'] = df['EMA_12'].rolling(12).mean()
+    # df['EMA_26'] = df['EMA_26'].rolling(26).mean()
     # 差離值
-    df['DIF'] = df['EMA_12'] - df['EMA_26']
+    df['DIF9'] = df['EMA_12'] - df['EMA_26']
     # 差離平均值
-    df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
+    df['DEA'] = df['DIF9'].ewm(span=9, adjust=False).mean()
+    # yahoo 以 DEA 為 MACD
+    df['MACD'] = df['DEA']
     # 柱狀值
-    df['MACD'] = (df['DIF'] - df['DEA']) * 2
-    return df.drop(['MA_7', 'MA_15', 'MA_30', 'EMA_12', 'EMA_26'], axis=1)
+    # df['MACD'] = 2*(df['DIF'] - df['DEA'])
+    return df.drop(['DEA'], axis=1)
 
 def __calculateRSI(df):
     '''計算RSI值
@@ -128,8 +116,16 @@ def __calculateRSI(df):
     maHigh = high.ewm(com=period-1, adjust=True, min_periods=period).mean()
     maLow = low.ewm(com=period-1, adjust=True, min_periods=period).mean()
 
-    df['RSI'] = maHigh/maLow
-    df['RSI'] = 100-(100/(1+df['RSI']))
+    df['RSI5'] = maHigh/maLow
+    df['RSI5'] = 100-(100/(1+df['RSI5']))
+
+    period = 10
+    maHigh = high.ewm(com=period-1, adjust=True, min_periods=period).mean()
+    maLow = low.ewm(com=period-1, adjust=True, min_periods=period).mean()
+
+    df['RSI10'] = maHigh/maLow
+    df['RSI10'] = 100-(100/(1+df['RSI10']))
+
     return df
 
 def __calculateBIAS(df):
@@ -142,6 +138,7 @@ def __calculateBIAS(df):
     df['BIAS_5'] = 100*((df['close']-df['MA_5'])/df['MA_5'])
     df['BIAS_10'] = 100*((df['close']-df['MA_10'])/df['MA_10'])
     df['BIAS_20'] = 100*((df['close']-df['MA_20'])/df['MA_20'])
+    df['B10-B20'] = df['BIAS_10'] - df['BIAS_20']
     return df
 
 def __calculateWR(df):
@@ -149,13 +146,15 @@ def __calculateWR(df):
     
     以14天為計算週期
 
-    原本的威廉指標，值越小時（收盤價越接近最高價），代表市場越處於超買中，因此乘上(-1)使得該指標符合"指標值越大代表超買、越小則代表超賣的統一認知"。
+    原本的威廉指標，值越小時（收盤價越接近最高價），代表市場越處於超買中。
+    
+    有些會乘上(-1)使得該指標符合"指標值越大代表超買、越小則代表超賣的統一認知"。
     
     '''
     high = df['high'].rolling(9).max()
     low = df['low'].rolling(9).min()
     close = df['close']
-    df['WR'] = -100 * ((high - close) / (high - low))
+    df['W%R9'] = 100 * ((high - close) / (high - low))
     return df
 
 def __calculateBBI(df):
@@ -170,10 +169,16 @@ def __calculateBBI(df):
     df['MA_3'] = df['close'].rolling(3).mean()
     df['MA_6'] = df['close'].rolling(6).mean()
     df['MA_12'] = df['close'].rolling(12).mean()
-    df['MA_24'] = df['close'].rolling(24).mean()
-    df['BBI'] = (df['MA_3']+df['MA_6']+df['MA_12']+df['MA_24'])/4
-
-    return df.drop(['MA_3','MA_6', 'MA_12', 'MA_24'], axis=1)
+    df['MA_24'] = df['close'].rolling(20).mean()
+    # df['MA_3'] = df['close'].ewm(span=3, adjust=False).mean()
+    # df['MA_6'] = df['close'].ewm(span=6, adjust=False).mean()
+    # df['MA_12'] = df['close'].ewm(span=12, adjust=False).mean()
+    # df['MA_24'] = df['close'].ewm(span=20, adjust=False).mean()
+    df['M3'] = df['MA_3']
+    df['BS'] = (df['MA_3']+df['MA_6']+df['MA_12']+df['MA_24'])/4
+    df['M3-BS'] = df['M3'] - df['BS']
+    # return df
+    return df.drop(['MA_3', 'MA_6', 'MA_12', 'MA_24'], axis=1)
 
 def __calculateCDP(df):
     '''計算CDP, Contrarian Operation 
@@ -190,26 +195,43 @@ def __calculateCDP(df):
 
     return df
 
-def __calculateDMI(df):
-    '''計算DMI, Directional Movement Index, 這個指標是由四個指標組合而成, 分別是ADX,ADXR,PDI,MDI。
+def __calculateDI(df):
+    '''計算DI, Directional Movement Index, 這個指標是由四個指標組合而成, 分別是ADX,ADXR,PDI,MDI。
     
     '''
 
-    df['TR'] = (np.maximum(np.maximum(df['high']-df['low'], np.abs(df['high']-pd.Series(df['close']).shift(1).values)), np.abs(df['low']-pd.Series(df['close']).shift(1).values)))
-    df['TR'] = df['TR'].rolling(14).sum()
+    df['HL'] = df['high'] - df['low']
+    df['DM+'] = (df['high'] - df['close'].shift(1)).abs()
+    df['DM-'] = (df['low'] - df['close'].shift(1)).abs()
+    df['TR'] = df[['HL','DM+','DM-']].max(axis=1)
+    del df['HL'], df['DM+'], df['DM-']
+
+    # df['ATR'] = df['TR'].ewm(span=14, adjust=False).mean()
+    df['ATR'] = df['TR'].rolling(14).mean()
+
+    # +-DX
     df['HD'] = df['high'] - REF(df['high'], 1)
     df['LD'] = REF(df['low'], 1) - df['low'] 
-    df['DMP'] = IF((df['HD'] > 0) & (df['HD'] > df['LD']), df['HD'], 0)
-    df['DMP'] = df['DMP'].rolling(14).mean()
-    df['DMM'] = IF((df['LD'] > 0) & (df['LD'] > df['HD']), df['LD'], 0)
-    df['DMM'] = df['DMM'].rolling(14).mean()
-    df['PDI'] = df['DMP'] * 100 / df['TR'];         
-    df['MDI'] = df['DMM'] * 100 / df['TR']
-    df['ADX'] = pd.Series(np.abs(df['MDI'] - df['PDI']) / (df['PDI'] + df['MDI']) * 100)
+    df['+DX'] = IF((df['HD'] > 0) & (df['HD'] > df['LD']), df['HD'], 0)
+    df['S+DX'] = df['+DX'].rolling(14).mean()
+    # df['S+DX'] = df['+DX'].ewm(span=14, adjust=False).mean()
+    df['-DX'] = IF((df['LD'] > 0) & (df['LD'] > df['HD']), df['LD'], 0)
+    df['S-DX'] = df['-DX'].rolling(14).mean()
+    # df['S-DX'] = df['-DX'].ewm(span=14, adjust=False).mean()
+
+    # +-DI
+    df['+DI'] = (df['S+DX'] / df['ATR'])*100         
+    df['-DI'] = (df['S-DX'] / df['ATR'])*100
+
+    # ADX
+    df['ADX'] = (np.abs(df['+DI'] - df['-DI'])/(df['+DI'] + df['-DI']))*100
+    # df['ADX'] = pd.Series(np.abs(df['-DI'] - df['+DI']) / (df['+DI'] + df['-DI'])*100)
     df['ADX'] = df['ADX'].rolling(14).mean()
+    df['S-DX'] = df['-DX'].ewm(span=14, adjust=False).mean()
     df['ADXR'] = (df['ADX'] + REF(df['ADX'], 14)) / 2
-    return df
-    # return df.drop(['TR', 'HD', 'LD', 'DMP', 'DMM'], axis=1)
+
+    # return df
+    return df.drop(['+DX','-DX', 'S+DX','S-DX', 'TR', 'HD', 'LD'], axis=1)
 
 def getStock(stockNo:int, start_date:str=None, end_date:str=None, period:str='D'):
     '''
@@ -221,6 +243,8 @@ def getStock(stockNo:int, start_date:str=None, end_date:str=None, period:str='D'
         查詢區間的起始時間, 預設為90天前(一個季), 必須是YYYYMMDD格式
     end       : str (optional) 
         查詢區間的結束時間, 預設為當天日期, 必須是YYYYMMDD格式
+    period    : str (optional)
+        指定使用日線周線月線
     '''
     if start_date == None:
         start_date = (datetime.today() - timedelta(days=180)).strftime("%Y%m%d")
@@ -228,7 +252,6 @@ def getStock(stockNo:int, start_date:str=None, end_date:str=None, period:str='D'
         end_date = datetime.today().strftime("%Y%m%d")
 
     stockInfo = getStockInformations(stockNo, start_date, end_date)
-    
     stockName:str = ""
     with open('search.json', 'r', encoding='utf8') as inf:
         slist = json.load(inf)
@@ -261,12 +284,10 @@ def getStock(stockNo:int, start_date:str=None, end_date:str=None, period:str='D'
     
     df = __calculateCDP(df)
 
-    df = __calculateDMI(df)
-    
-    # print(df, df.info())
+    df = __calculateDI(df)
 
-    # df['date'] = df.index
-    # df['date'] = df['date'].dt.strftime('%Y%m%d')
+    df = df.drop(['stock_code_id'], axis=1)
+    
     response = dict()
     response['stockNo'] = stockNo
     response['stockName'] = stockName
