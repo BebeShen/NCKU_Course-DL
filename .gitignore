@@ -133,3 +133,4 @@ chromedriver.exe
 *.zip
 *LOG.md
 *.html
+/stocktool2/out*.json

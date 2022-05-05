@@ -1,5 +1,4 @@
 import json
-from tokenize import group
 import requests
 import time
 from bs4 import BeautifulSoup
@@ -63,7 +62,9 @@ def allalive(idList):
     soup = BeautifulSoup(r.text, 'html.parser')
     data = []
     dictList = dict()
+    searchDict = dict()
     for c in contents:
+        searchDict[c['id']] = c['name']
         if len(c['industries']) < 1:
             continue
         for i in range(len(c['industries'])):
@@ -83,12 +84,14 @@ def allalive(idList):
                     "id":c['id'], 
                     "name":c['name']
                 })
-    return dictList
+    return dictList, searchDict
     # print(dictList)
 if __name__ == "__main__":
     data = webCrawler()
-    outputData = allalive(data)
+    outputData, searchList = allalive(data)
     print(len(outputData), outputData.keys())
     with open('stock.json', 'w', encoding='utf8') as outfile:
         json.dump(outputData, outfile, indent=4, ensure_ascii=False)
+    with open('search.json', 'w', encoding='utf8') as out:
+        json.dump(searchList, out, indent=4, ensure_ascii=False)
     # print(json.dumps(outputData, indent=4, sort_keys=True, ensure_ascii=False))  
